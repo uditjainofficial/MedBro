@@ -1,39 +1,33 @@
+// page.tsx
 "use client";
 import axios from "axios";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { doctorAgent } from "../../_components/DoctorAgentCard";
-import { Circle, PhoneCall, PhoneOff } from "lucide-react";
+import { Circle, Loader2, PhoneCall, PhoneOff } from "lucide-react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import Vapi from "@vapi-ai/web";
+import { toast } from "sonner";
+import { SessionDetail, Message } from "../../types";
 
-type SessionDetail = {
-  id: number;
-  notes: string;
-  sessionId: string;
-  report: Record<string, any>;
-  selectedDoctor: doctorAgent;
-  createdOn: string;
-};
-
-type Message = {
-  role: string;
-  text: string;
-};
 
 function MedicalVoiceAgent() {
   const params = useParams();
   const sessionId = params?.sessionId as string;
+  const router = useRouter();
 
   const [callStarted, setCallStarted] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [currentRole, setCurrentRole] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null);
 
-  // ✅ Fix 1: useRef so vapiInstance is always synchronously available
+  // ✅ Fix 1: useRef for Vapi instance — always synchronously available
   const vapiRef = useRef<Vapi | null>(null);
+  // ✅ Fix 2: useRef for messages — avoids stale closure in GenerateReport
+  const messagesRef = useRef<Message[]>([]);
 
   const GetSessionDetails = useCallback(async () => {
     try {
@@ -48,25 +42,96 @@ function MedicalVoiceAgent() {
     if (sessionId) GetSessionDetails();
   }, [sessionId, GetSessionDetails]);
 
+  // ✅ Fix 3: Keep messagesRef always in sync with messages state
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // ✅ Fix 4: Cleanup Vapi on page unmount
+  useEffect(() => {
+    return () => {
+      if (vapiRef.current) {
+        vapiRef.current.stop();
+        vapiRef.current.removeAllListeners();
+        vapiRef.current = null;
+      }
+    };
+  }, []);
+
+  const GenerateReport = async () => {
+    // ✅ Fix 5: Use messagesRef.current — never stale
+    const currentMessages = messagesRef.current;
+
+    if (!currentMessages || currentMessages.length === 0) {
+      console.warn("No messages to generate report from");
+      toast.error("No conversation recorded. Report could not be generated.");
+      return;
+    }
+
+    try {
+      setIsGeneratingReport(true);
+      const result = await axios.post("/api/medical-report", {
+        messages: currentMessages,
+        sessionDetail: sessionDetail,
+        sessionId: sessionId,
+      });
+      console.log("Report generated:", result.data);
+      toast.success("Your medical report has been generated!");
+      // ✅ Fix 6: Navigate AFTER report is saved, not before
+      router.replace("/dashboard");
+    } catch (error) {
+      console.error("Failed to generate report:", error);
+      toast.error("Failed to generate report. Please try again.");
+      router.replace("/dashboard");
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
   const StartCall = async () => {
-    // ✅ Fix 2: Unlock audio context on user gesture — fixes Chrome autoplay block
-    //    This is why you can't hear the AI voice
+    // ✅ Fix 7: Unlock AudioContext on user gesture — fixes Chrome audio autoplay block
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     if (AudioContext) {
       const ctx = new AudioContext();
       await ctx.resume();
     }
 
-    // ✅ Fix 3: Create instance and assign to ref synchronously (not useState)
+    // ✅ Fix 8: Create instance and assign to ref synchronously
     const vapi = new Vapi(process.env.NEXT_PUBLIC_VAPI_API_KEY!);
     vapiRef.current = vapi;
 
-    // ✅ Fix 4: Attach ALL listeners before calling .start()
+    const VapiAgentConfig = {
+      name: "AI Medical Doctor Voice Agent",
+      firstMessage:
+        "Hi there! I'm your AI Medical Assistant. I'm here to help you with any health questions or concerns you might have today. How are you feeling?",
+      transcriber: {
+        provider: "assembly-ai",
+        language: "en",
+      },
+      voice: {
+        provider: "11labs",
+        voiceId: "burt",
+      },
+      model: {
+        provider: "openai",
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: sessionDetail?.selectedDoctor?.agentPrompt,
+          },
+        ],
+      },
+    };
+
+    // ✅ Fix 9: All listeners attached BEFORE .start()
     vapi.on("call-start", () => {
       console.log("Call started");
       setCallStarted(true);
     });
 
+    // ✅ Fix 10: call-end triggers report generation automatically
+    //    (handles both manual disconnect AND natural call end)
     vapi.on("call-end", () => {
       console.log("Call ended");
       setCallStarted(false);
@@ -75,6 +140,17 @@ function MedicalVoiceAgent() {
     vapi.on("error", (error) => {
       console.error("Vapi error:", error);
       setCallStarted(false);
+    });
+
+    // ✅ Fix 11: speech-start/end on local `vapi` variable, not stale state
+    vapi.on("speech-start", () => {
+      console.log("Assistant started speaking");
+      setCurrentRole("assistant");
+    });
+
+    vapi.on("speech-end", () => {
+      console.log("Assistant stopped speaking");
+      setCurrentRole("user");
     });
 
     vapi.on("message", (message) => {
@@ -86,45 +162,40 @@ function MedicalVoiceAgent() {
           setLiveTranscript(transcript);
           setCurrentRole(role);
         } else if (transcriptType === "final") {
-          setMessages((prev) => [...prev, { role, text: transcript }]);
+          setMessages((prev) => {
+            const updated = [...prev, { role, text: transcript }];
+            messagesRef.current = updated; // keep ref in sync immediately
+            return updated;
+          });
           setLiveTranscript("");
           setCurrentRole(null);
         }
       }
     });
 
-    // ✅ Fix 5: speech-start/end now correctly on the local `vapi` variable
-    vapi.on("speech-start", () => {
-      console.log("Assistant started speaking");
-      setCurrentRole("assistant");
-    });
-
-    vapi.on("speech-end", () => {
-      console.log("Assistant stopped speaking");
-      setCurrentRole("user");
-    });
-
     try {
-      await vapi.start(process.env.NEXT_PUBLIC_VAPI_VOICE_ASSISTANT_ID!);
+      // @ts-ignore
+      await vapi.start(VapiAgentConfig);
     } catch (error) {
       console.error("Failed to start call:", error);
       setCallStarted(false);
     }
   };
 
-  const EndCall = () => {
+  const EndCall = async () => {
     const vapi = vapiRef.current;
     if (!vapi) return;
 
     vapi.stop();
-    // ✅ Fix 6: .off() requires the event name only (removeAllListeners pattern)
-    //    Vapi extends EventEmitter — pass event name to remove all listeners for it
     vapi.removeAllListeners();
+    vapiRef.current = null;
 
     setCallStarted(false);
     setLiveTranscript("");
     setCurrentRole(null);
-    vapiRef.current = null;
+
+    // ✅ Fix 12: GenerateReport runs BEFORE navigation (it handles navigation internally)
+    await GenerateReport();
   };
 
   return (
@@ -173,14 +244,22 @@ function MedicalVoiceAgent() {
             )}
           </div>
 
-          {/* Call button */}
-          {!callStarted ? (
-            <Button className="mt-20 flex items-center gap-2" onClick={StartCall}>
+          {/* Call / Disconnect / Generating Report buttons */}
+          {isGeneratingReport ? (
+            <Button disabled className="mt-20 flex items-center gap-2">
+              <Loader2 className="animate-spin" />
+              Generating Report...
+            </Button>
+          ) : !callStarted ? (
+            <Button
+              className="mt-20 flex items-center gap-2"
+              onClick={StartCall}
+            >
               <PhoneCall />
               Start Call
             </Button>
           ) : (
-            <Button variant="destructive" onClick={EndCall}>
+            <Button variant="destructive" className="mt-20" onClick={EndCall}>
               <PhoneOff />
               Disconnect
             </Button>

@@ -1,12 +1,26 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Image from 'next/image'
 import AddNewSessionDialog from "./AddNewSessionDialog";
+import axios from "axios";
+import HistoryTable from "./HistoryTable";
 
 
 
 function HistoryList() {
     const [historyList,setHistoryList] = useState([]);
+
+    const GetHistoryList=async()=>{
+      const result=await axios.get('/api/session-chat?sessionId=all');
+      console.log(result.data);
+      setHistoryList(result.data);
+    }
+
+    useEffect(()=>{
+      GetHistoryList();
+    },[])
+
+
   return (
     <div>
         {historyList.length==0?
@@ -16,7 +30,9 @@ function HistoryList() {
             <p>It looks like you havent consulted with any doctors yet.</p>
             <AddNewSessionDialog />
         </div>
-        : <div>List</div>
+        : <div>
+              <HistoryTable historyList={historyList}/>
+        </div>
     }
     </div>
   );
