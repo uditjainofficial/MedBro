@@ -16,6 +16,11 @@ export async function POST(req: NextRequest) {
 
   const email = user.primaryEmailAddress?.emailAddress;
 
+  // ✅ Prevent undefined email (IMPORTANT FIX)
+  if (!email) {
+    return NextResponse.json({ error: "User email not found" });
+  }
+
   try {
     const sessionId = uuidv4();
 
@@ -23,8 +28,8 @@ export async function POST(req: NextRequest) {
       .insert(SessionChatTable)
       .values({
         sessionId: sessionId,
-        createdBy: email, // ✅ REAL USER EMAIL
-        notes: notes,
+        createdBy: email,
+        notes: notes || "",
         selectedDoctor: selectedDoctor,
         createdOn: new Date().toString(),
       })
@@ -40,27 +45,43 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const sessionId = searchParams.get("sessionId");
-  const user=await currentUser();
+  const user = await currentUser();
 
   if (!sessionId) {
     return NextResponse.json({ error: "No sessionId" });
   }
 
-  if(sessionId=='all'){
-    const result = await db
-    .select()
-    .from(SessionChatTable)
-    .where(eq(SessionChatTable.createdBy, user?.primaryEmailAddress?.emailAddress))
-    .orderBy(desc(SessionChatTable.id));
-
-  return NextResponse.json(result);
+  // ✅ Ensure user exists
+  if (!user) {
+    return NextResponse.json([]);
   }
-  else{
-    const result = await db
-    .select()
-    .from(SessionChatTable)
-    .where(eq(SessionChatTable.sessionId, sessionId));
 
-    return NextResponse.json(result[0]);
+  const userEmail = user.primaryEmailAddress?.emailAddress;
+
+  // ✅ Prevent undefined error (THIS FIXES VERCEL BUILD)
+  if (!userEmail) {
+    return NextResponse.json([]);
+  }
+
+  try {
+    if (sessionId === "all") {
+      const result = await db
+        .select()
+        .from(SessionChatTable)
+        .where(eq(SessionChatTable.createdBy, userEmail))
+        .orderBy(desc(SessionChatTable.id));
+
+      return NextResponse.json(result);
+    } else {
+      const result = await db
+        .select()
+        .from(SessionChatTable)
+        .where(eq(SessionChatTable.sessionId, sessionId));
+
+      return NextResponse.json(result[0]);
+    }
+  } catch (e) {
+    console.error("SESSION FETCH ERROR:", e);
+    return NextResponse.json({ error: "Failed to fetch session" });
   }
 }
