@@ -25,7 +25,7 @@ function Dashboard() {
         <h2 className="font-bold text-2xl">My Dashboard</h2>
         <AddNewSessionDialog />
       </div>
-      <HistoryList />
+      <HistoryList limit={6} />
       <DoctorsAgentList />
     </div>
   );

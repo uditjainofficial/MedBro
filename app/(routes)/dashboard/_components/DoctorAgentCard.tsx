@@ -1,8 +1,11 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { IconArrowRight } from "@tabler/icons-react";
+import axios from "axios";
+import { useRouter } from "next/navigation";
+import { Loader2Icon } from "lucide-react";
 
 export type doctorAgent = {
   id: number;
@@ -18,6 +21,32 @@ type props = {
 };
 
 function DoctorAgentCard({ doctorAgent }: props) {
+
+    const [loading, setLoading] = useState(false);
+    const router=useRouter();
+  
+
+  const onStartConsultation = async () => {
+      try {
+        setLoading(true);
+  
+        const result = await axios.post("/api/session-chat", {
+          notes: '',
+          selectedDoctor: doctorAgent,
+        });
+  
+        if (result.data?.sessionId) {
+          console.log("Session Created:", result.data.sessionId);
+          //route new conversation screen
+          router.push('/dashboard/medical-agent/'+result.data.sessionId);
+        }
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
   return (
     <div>
       <div className="relative w-full h-[250px]">
@@ -39,8 +68,8 @@ function DoctorAgentCard({ doctorAgent }: props) {
         {doctorAgent.description}
       </p>
 
-      <Button className="w-full mt-2">
-        Start Consultation <IconArrowRight />
+      <Button className="w-full mt-2" onClick={onStartConsultation}>
+        Start Consultation {loading?<Loader2Icon className="animate-spin" />: <IconArrowRight />}
       </Button>
     </div>
   );

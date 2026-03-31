@@ -1,4 +1,3 @@
-// page.tsx
 "use client";
 import axios from "axios";
 import { useParams, useRouter } from "next/navigation";
@@ -22,12 +21,27 @@ function MedicalVoiceAgent() {
   const [currentRole, setCurrentRole] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [micPermission, setMicPermission] = useState(false);
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null);
 
   // ✅ Fix 1: useRef for Vapi instance — always synchronously available
   const vapiRef = useRef<Vapi | null>(null);
   // ✅ Fix 2: useRef for messages — avoids stale closure in GenerateReport
   const messagesRef = useRef<Message[]>([]);
+
+  const handleStartCall = async () => {
+  try {
+    // 👇 Ask mic permission FIRST
+    await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // 👇 ONLY after permission → start actual call
+    await StartCall();
+
+  } catch (error) {
+    console.error("Microphone permission denied:", error);
+    alert("Please allow microphone access to start the call.");
+  }
+};
 
   const GetSessionDetails = useCallback(async () => {
     try {
@@ -253,7 +267,7 @@ function MedicalVoiceAgent() {
           ) : !callStarted ? (
             <Button
               className="mt-20 flex items-center gap-2"
-              onClick={StartCall}
+              onClick={handleStartCall}
             >
               <PhoneCall />
               Start Call
